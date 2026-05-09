@@ -296,72 +296,53 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
 
 
 add_hook('ClientAreaPageRegister', 1, function($vars) {
-    
+
 	if ( gtm_get_module_settings('gtm-enable-datalayer') == 'off' ) return '';
 
 	add_hook('ClientAreaFooterOutput', 1, function($vars) {
 
-		return '
-		<script id="GTM_DataLayer">
-		
-			document.querySelectorAll("#inputNewPassword1, #inputNewPassword2, #inputEmail").forEach(field => {
-				field.setAttribute("required", "");
-			});
-			
-			document.querySelector("form#frmCheckout input[type=\"submit\"]").onclick = function(e) {
-				e.preventDefault();
+		// We push a privacy-minimal sign_up event: just `event` + `method`.
+		// We deliberately do NOT include first_name, last_name, email, phone or
+		// address fields here. Google Analytics' Terms of Service explicitly
+		// forbid sending personally identifiable information (PII) to GA, and
+		// under GDPR the principle of data minimisation requires that we only
+		// transfer what is strictly necessary for the analytics purpose. A
+		// sign_up conversion only needs to know that a sign-up happened, not
+		// who signed up. If you need user-level conversion attribution for
+		// Google Ads, configure Google Ads Enhanced Conversions in the GTM UI;
+		// that pathway hashes the PII (SHA-256) before sending and uses a
+		// separate, audited transfer mechanism.
+		//
+		// We also use a "submit" listener instead of hijacking the submit
+		// button click + e.preventDefault() + register_form.submit(). The old
+		// approach broke client-side form validation and blocked any other
+		// JavaScript that listened to the form's normal submit lifecycle.
+		return <<<HTML
+<script id="GTM_DataLayer">
+(function() {
+  var form = document.getElementById("frmCheckout");
+  if (!form) return;
 
-				const register_form 		= document.getElementById("frmCheckout");
-				const inputCountry			= document.querySelector("#inputCountry");
-				let first_name              = document.querySelector("#inputFirstName").value;
-				let last_name               = document.querySelector("#inputLastName").value;
-				let email_address           = document.querySelector("#inputEmail").value;
-				let phone_number            = document.querySelector("#inputPhone").value.replace(/\\s+/g, "");
-				//let phone_country_code      = document.querySelector(".selected-dial-code").innerHTML;
-				let city                    = document.querySelector("#inputCity").value;
-				let state                   = document.querySelector("#stateinput").value;
-				let country                 = inputCountry.options[inputCountry.selectedIndex].text;
-				let postal_code             = document.querySelector("#inputPostcode").value;
-				let street_address          = document.querySelector("#inputAddress1").value;
+  // Preserve the previous client-side UX patch: WHMCS' default
+  // clientregister.tpl does not mark email/password as `required`, so empty
+  // submissions silently round-trip to the server before erroring. Add the
+  // attribute client-side so the browser's native validation catches it
+  // immediately. Unrelated to analytics, but kept here to avoid a UX
+  // regression for sites that relied on this behaviour.
+  document.querySelectorAll("#inputNewPassword1, #inputNewPassword2, #inputEmail").forEach(function(field) {
+    field.setAttribute("required", "");
+  });
 
-				let company_name            = document.querySelector("#inputCompanyName").value;
-				let street_address_2        = document.querySelector("#inputAddress2").value;
-
-        if (first_name && last_name && email_address && phone_number){
-
-          signupEvent = {
-            event: "sign_up",
-            signupData: {
-              method: "WHMCS",
-              first_name: first_name,
-              last_name: last_name,
-              email_address: email_address,
-              phone_number: phone_number,
-              //phone_country_code: phone_country_code,
-              street_address: street_address,
-              city: city,
-              state: state,
-              country: country,
-              postal_code: postal_code,
-            }
-          }
-
-          // Add to Data Layer if available
-          if(company_name){ signupEvent.signupData.company_name = company_name; }
-          if(street_address_2){ signupEvent.signupData.street_address_2 = street_address_2; }
-
-          // Submit event to Google
-          dataLayer.push(signupEvent);
-
-        }
-
-        // Submit form normally
-				register_form.submit();
-
-			}
-
-		</script>
-		';
+  form.addEventListener("submit", function() {
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({
+      event: "sign_up",
+      method: "WHMCS"
+    });
+  });
+})();
+</script>
+HTML;
 	});
 
 });
