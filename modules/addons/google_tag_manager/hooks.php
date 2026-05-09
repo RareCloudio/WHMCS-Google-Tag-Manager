@@ -55,11 +55,28 @@ function gtm_ga_module_in_use(){
   return ($ga_is_active && !empty($ga_site_tag))? true:false;
 }
 
+/**
+ * Validate and sanitize the GTM container ID before injecting it into HTML/JS.
+ *
+ * Google Tag Manager container IDs follow the format `GTM-XXXXXXX` where the
+ * suffix is alphanumeric (uppercase). Anything outside that pattern is either
+ * a typo or an attempted injection, so we reject it. This stops a malicious
+ * (or compromised) admin from using the settings field as an XSS vector that
+ * would execute on every Client Area page load.
+ *
+ * Returns the validated ID, or an empty string if invalid.
+ */
+function gtm_safe_container_id($raw){
+  if (empty($raw)) return '';
+  $raw = trim($raw);
+  return preg_match('/^GTM-[A-Z0-9]+$/', $raw) ? $raw : '';
+}
+
 /** The following two hooks output the code required for GTM to function **/
 
 add_hook('ClientAreaHeadOutput', 1, function($vars) {
-  
-  $container_id = gtm_get_module_settings('gtm-container-id');
+
+  $container_id = gtm_safe_container_id(gtm_get_module_settings('gtm-container-id'));
 
   if (!empty($container_id)):
     return "<!-- Google Tag Manager -->
@@ -76,7 +93,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
 add_hook('ClientAreaHeaderOutput', 1, function($vars) {
 
-  $container_id = gtm_get_module_settings('gtm-container-id');
+  $container_id = gtm_safe_container_id(gtm_get_module_settings('gtm-container-id'));
   if (!empty($container_id)):
     return "<!-- Google Tag Manager (noscript) -->
 <noscript><iframe src='https://www.googletagmanager.com/ns.html?id=$container_id'
