@@ -72,7 +72,50 @@ function gtm_safe_container_id($raw){
   return preg_match('/^GTM-[A-Z0-9]+$/', $raw) ? $raw : '';
 }
 
-/** The following two hooks output the code required for GTM to function **/
+/** The following hooks output the code required for GTM to function **/
+
+/**
+ * Optional: inject Google Consent Mode v2 default-denied bootstrap BEFORE the
+ * GTM loader runs. When enabled, every Google tag GTM ships sees the correct
+ * consent state from the very first dataLayer event. Without this, tags would
+ * fire in their default (granted) mode until a cookie banner has a chance to
+ * call gtag('consent', 'update', ...), which on a fast-loading page can mean
+ * one or more page_views are recorded before consent is captured.
+ *
+ * Priority is 0 so this hook runs before the GTM loader (priority 1) registered
+ * below. WHMCS executes hooks of the same event in ascending priority order.
+ *
+ * The cookie banner (or external CMP) is responsible for calling
+ * gtag('consent', 'update', { ... }) on accept; this hook only sets the
+ * default state.
+ */
+add_hook('ClientAreaHeadOutput', 0, function($vars) {
+
+  if ( gtm_get_module_settings('gtm-enable-consent-mode') !== 'on' ) return '';
+  $container_id = gtm_safe_container_id(gtm_get_module_settings('gtm-container-id'));
+  if (empty($container_id)) return '';
+
+  return "<!-- Google Consent Mode v2 default (RareCloud / WHMCS-GTM module) -->
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+window.gtag = gtag;
+gtag('consent', 'default', {
+  'ad_storage': 'denied',
+  'ad_user_data': 'denied',
+  'ad_personalization': 'denied',
+  'analytics_storage': 'denied',
+  'functionality_storage': 'denied',
+  'personalization_storage': 'denied',
+  'security_storage': 'granted',
+  'wait_for_update': 500
+});
+gtag('set', 'url_passthrough', true);
+gtag('set', 'ads_data_redaction', true);
+</script>
+<!-- End Google Consent Mode v2 default -->";
+
+});
 
 add_hook('ClientAreaHeadOutput', 1, function($vars) {
 
