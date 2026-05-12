@@ -58,7 +58,7 @@ function google_tag_manager_config(){
         'description' => 'Automatically includes the GTM embed codes and provides the necessary JavaScript dataLayer for eCommerce events',
         'author' => 'Websavers Inc.',
         'language' => 'english',
-        'version' => '3.1',
+        'version' => '3.2',
         'fields' => [
             'gtm-container-id' => [
                 'FriendlyName' => 'GTM Container ID',
@@ -72,6 +72,12 @@ function google_tag_manager_config(){
                 'Type' => 'yesno',
                 'Default' => 'yes',
                 'Description' => 'Disable this if you will be using Google Tag Manager to create your events and DataLayer variables',
+            ],
+            'gtm-enable-consent-mode' => [
+                'FriendlyName' => 'Enable Google Consent Mode v2',
+                'Type' => 'yesno',
+                'Default' => 'no',
+                'Description' => 'Inject a Consent Mode v2 default-denied bootstrap before GTM loads. Required if your client area serves visitors in the EU/EEA/UK and you load any Google tags (GA4, Google Ads, etc.). When enabled, your cookie banner (or external CMP) is responsible for calling gtag(\'consent\', \'update\', { ... }) once the visitor accepts. Leave disabled if you are not using a cookie banner, or if your CMP already injects its own consent bootstrap before this module runs.',
             ],
         ]
     ];

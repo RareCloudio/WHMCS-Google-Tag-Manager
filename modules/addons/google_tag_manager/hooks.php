@@ -55,11 +55,71 @@ function gtm_ga_module_in_use(){
   return ($ga_is_active && !empty($ga_site_tag))? true:false;
 }
 
-/** The following two hooks output the code required for GTM to function **/
+/**
+ * Validate and sanitize the GTM container ID before injecting it into HTML/JS.
+ *
+ * Google Tag Manager container IDs follow the format `GTM-XXXXXXX` where the
+ * suffix is alphanumeric (uppercase). Anything outside that pattern is either
+ * a typo or an attempted injection, so we reject it. This stops a malicious
+ * (or compromised) admin from using the settings field as an XSS vector that
+ * would execute on every Client Area page load.
+ *
+ * Returns the validated ID, or an empty string if invalid.
+ */
+function gtm_safe_container_id($raw){
+  if (empty($raw)) return '';
+  $raw = trim($raw);
+  return preg_match('/^GTM-[A-Z0-9]+$/', $raw) ? $raw : '';
+}
+
+/** The following hooks output the code required for GTM to function **/
+
+/**
+ * Optional: inject Google Consent Mode v2 default-denied bootstrap BEFORE the
+ * GTM loader runs. When enabled, every Google tag GTM ships sees the correct
+ * consent state from the very first dataLayer event. Without this, tags would
+ * fire in their default (granted) mode until a cookie banner has a chance to
+ * call gtag('consent', 'update', ...), which on a fast-loading page can mean
+ * one or more page_views are recorded before consent is captured.
+ *
+ * Priority is 0 so this hook runs before the GTM loader (priority 1) registered
+ * below. WHMCS executes hooks of the same event in ascending priority order.
+ *
+ * The cookie banner (or external CMP) is responsible for calling
+ * gtag('consent', 'update', { ... }) on accept; this hook only sets the
+ * default state.
+ */
+add_hook('ClientAreaHeadOutput', 0, function($vars) {
+
+  if ( gtm_get_module_settings('gtm-enable-consent-mode') !== 'on' ) return '';
+  $container_id = gtm_safe_container_id(gtm_get_module_settings('gtm-container-id'));
+  if (empty($container_id)) return '';
+
+  return "<!-- Google Consent Mode v2 default (RareCloud / WHMCS-GTM module) -->
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+window.gtag = gtag;
+gtag('consent', 'default', {
+  'ad_storage': 'denied',
+  'ad_user_data': 'denied',
+  'ad_personalization': 'denied',
+  'analytics_storage': 'denied',
+  'functionality_storage': 'denied',
+  'personalization_storage': 'denied',
+  'security_storage': 'granted',
+  'wait_for_update': 500
+});
+gtag('set', 'url_passthrough', true);
+gtag('set', 'ads_data_redaction', true);
+</script>
+<!-- End Google Consent Mode v2 default -->";
+
+});
 
 add_hook('ClientAreaHeadOutput', 1, function($vars) {
-  
-  $container_id = gtm_get_module_settings('gtm-container-id');
+
+  $container_id = gtm_safe_container_id(gtm_get_module_settings('gtm-container-id'));
 
   if (!empty($container_id)):
     return "<!-- Google Tag Manager -->
@@ -76,7 +136,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
 
 add_hook('ClientAreaHeaderOutput', 1, function($vars) {
 
-  $container_id = gtm_get_module_settings('gtm-container-id');
+  $container_id = gtm_safe_container_id(gtm_get_module_settings('gtm-container-id'));
   if (!empty($container_id)):
     return "<!-- Google Tag Manager (noscript) -->
 <noscript><iframe src='https://www.googletagmanager.com/ns.html?id=$container_id'
@@ -279,72 +339,53 @@ add_hook('ShoppingCartCheckoutCompletePage', 1, function($vars) {
 
 
 add_hook('ClientAreaPageRegister', 1, function($vars) {
-    
+
 	if ( gtm_get_module_settings('gtm-enable-datalayer') == 'off' ) return '';
 
 	add_hook('ClientAreaFooterOutput', 1, function($vars) {
 
-		return '
-		<script id="GTM_DataLayer">
-		
-			document.querySelectorAll("#inputNewPassword1, #inputNewPassword2, #inputEmail").forEach(field => {
-				field.setAttribute("required", "");
-			});
-			
-			document.querySelector("form#frmCheckout input[type=\"submit\"]").onclick = function(e) {
-				e.preventDefault();
+		// We push a privacy-minimal sign_up event: just `event` + `method`.
+		// We deliberately do NOT include first_name, last_name, email, phone or
+		// address fields here. Google Analytics' Terms of Service explicitly
+		// forbid sending personally identifiable information (PII) to GA, and
+		// under GDPR the principle of data minimisation requires that we only
+		// transfer what is strictly necessary for the analytics purpose. A
+		// sign_up conversion only needs to know that a sign-up happened, not
+		// who signed up. If you need user-level conversion attribution for
+		// Google Ads, configure Google Ads Enhanced Conversions in the GTM UI;
+		// that pathway hashes the PII (SHA-256) before sending and uses a
+		// separate, audited transfer mechanism.
+		//
+		// We also use a "submit" listener instead of hijacking the submit
+		// button click + e.preventDefault() + register_form.submit(). The old
+		// approach broke client-side form validation and blocked any other
+		// JavaScript that listened to the form's normal submit lifecycle.
+		return <<<HTML
+<script id="GTM_DataLayer">
+(function() {
+  var form = document.getElementById("frmCheckout");
+  if (!form) return;
 
-				const register_form 		= document.getElementById("frmCheckout");
-				const inputCountry			= document.querySelector("#inputCountry");
-				let first_name              = document.querySelector("#inputFirstName").value;
-				let last_name               = document.querySelector("#inputLastName").value;
-				let email_address           = document.querySelector("#inputEmail").value;
-				let phone_number            = document.querySelector("#inputPhone").value.replace(/\\s+/g, "");
-				//let phone_country_code      = document.querySelector(".selected-dial-code").innerHTML;
-				let city                    = document.querySelector("#inputCity").value;
-				let state                   = document.querySelector("#stateinput").value;
-				let country                 = inputCountry.options[inputCountry.selectedIndex].text;
-				let postal_code             = document.querySelector("#inputPostcode").value;
-				let street_address          = document.querySelector("#inputAddress1").value;
+  // Preserve the previous client-side UX patch: WHMCS' default
+  // clientregister.tpl does not mark email/password as `required`, so empty
+  // submissions silently round-trip to the server before erroring. Add the
+  // attribute client-side so the browser's native validation catches it
+  // immediately. Unrelated to analytics, but kept here to avoid a UX
+  // regression for sites that relied on this behaviour.
+  document.querySelectorAll("#inputNewPassword1, #inputNewPassword2, #inputEmail").forEach(function(field) {
+    field.setAttribute("required", "");
+  });
 
-				let company_name            = document.querySelector("#inputCompanyName").value;
-				let street_address_2        = document.querySelector("#inputAddress2").value;
-
-        if (first_name && last_name && email_address && phone_number){
-
-          signupEvent = {
-            event: "sign_up",
-            signupData: {
-              method: "WHMCS",
-              first_name: first_name,
-              last_name: last_name,
-              email_address: email_address,
-              phone_number: phone_number,
-              //phone_country_code: phone_country_code,
-              street_address: street_address,
-              city: city,
-              state: state,
-              country: country,
-              postal_code: postal_code,
-            }
-          }
-
-          // Add to Data Layer if available
-          if(company_name){ signupEvent.signupData.company_name = company_name; }
-          if(street_address_2){ signupEvent.signupData.street_address_2 = street_address_2; }
-
-          // Submit event to Google
-          dataLayer.push(signupEvent);
-
-        }
-
-        // Submit form normally
-				register_form.submit();
-
-			}
-
-		</script>
-		';
+  form.addEventListener("submit", function() {
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({
+      event: "sign_up",
+      method: "WHMCS"
+    });
+  });
+})();
+</script>
+HTML;
 	});
 
 });
